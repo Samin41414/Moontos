@@ -1,0 +1,158 @@
+
+import React, { useState } from 'react';
+import { AppState, EditOperation, EditedImage } from './types';
+import { processImage } from './services/geminiService';
+import Editor from './components/Editor';
+import Sidebar from './components/Sidebar';
+import ImageUploader from './components/ImageUploader';
+import Header from './components/Header';
+import Notification from './components/Notification';
+
+interface NotificationState {
+  message: string | null;
+  type: 'error' | 'success' | 'info';
+}
+
+const App: React.FC = () => {
+  const [state, setState] = useState<AppState>({
+    originalImage: null,
+    currentImage: null,
+    history: [],
+    isProcessing: false,
+    error: null,
+  });
+
+  const [notification, setNotification] = useState<NotificationState>({
+    message: null,
+    type: 'info'
+  });
+
+  const showNotification = (msg: string, type: 'error' | 'success' | 'info' = 'info') => {
+    setNotification({ message: msg, type });
+    setTimeout(() => setNotification(prev => ({ ...prev, message: null })), 5000);
+  };
+
+  const onImageUpload = (base64: string) => {
+    setState(prev => ({
+      ...prev,
+      originalImage: base64,
+      currentImage: base64,
+      history: [{
+        id: 'init',
+        url: base64,
+        timestamp: Date.now(),
+        operation: 'Original'
+      }],
+      error: null
+    }));
+  };
+
+  const handleEdit = async (operation: EditOperation) => {
+    if (!state.currentImage) return;
+
+    setState(prev => ({ ...prev, isProcessing: true, error: null }));
+
+    let prompt = "";
+    switch (operation) {
+      case 'REMOVE_BG': prompt = "Remove the background. Return only the subject with a transparent background."; break;
+      case 'UPSCALE_HD': prompt = "Enhance to High Definition. Sharpen details, reduce noise, and improve lighting."; break;
+      case 'RETOUCH': prompt = "Professional retouching. Smooth textures, balance colors, improve clarity."; break;
+      case 'BW': prompt = "Convert to a high-contrast black and white photograph."; break;
+      case 'VINTAGE': prompt = "Apply a vintage retro film look with warm tones and faded colors."; break;
+      case 'CINEMATIC': prompt = "Apply a cinematic color grade, enhancing depth and mood."; break;
+      case 'VIBRANT': prompt = "Enhance saturation and color dynamics to make the image vibrant."; break;
+      default: prompt = "Enhance the image.";
+    }
+
+    try {
+      const result = await processImage(state.currentImage, prompt);
+      const newEdit: EditedImage = {
+        id: Math.random().toString(36).substr(2, 9),
+        url: result,
+        timestamp: Date.now(),
+        operation: operation.replace('_', ' ')
+      };
+
+      setState(prev => ({
+        ...prev,
+        currentImage: result,
+        history: [...prev.history, newEdit],
+        isProcessing: false
+      }));
+    } catch (err: any) {
+      showNotification("Wait a moment and try again.", 'error');
+      setState(prev => ({ ...prev, isProcessing: false }));
+    }
+  };
+
+  const selectHistoryItem = (item: EditedImage) => {
+    setState(prev => ({ ...prev, currentImage: item.url }));
+  };
+
+  const resetToOriginal = () => {
+    if (state.originalImage) {
+      setState(prev => ({
+        ...prev,
+        currentImage: state.originalImage,
+        history: state.history.slice(0, 1)
+      }));
+    }
+  };
+
+  const undo = () => {
+    if (state.history.length > 1) {
+      const newHistory = [...state.history];
+      newHistory.pop();
+      const previous = newHistory[newHistory.length - 1];
+      setState(prev => ({
+        ...prev,
+        currentImage: previous.url,
+        history: newHistory
+      }));
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
+      <Header onNotify={showNotification} />
+      
+      <main className="flex flex-1 overflow-hidden">
+        <Sidebar 
+          onEdit={handleEdit} 
+          isProcessing={state.isProcessing} 
+          hasImage={!!state.currentImage}
+          onUndo={undo}
+          onReset={resetToOriginal}
+          historyCount={state.history.length}
+        />
+        
+        <div className="flex-1 relative flex flex-col items-center justify-center bg-[radial-gradient(circle_at_center,_#18181b_0%,_#09090b_100%)] overflow-hidden">
+          {!state.currentImage ? (
+            <ImageUploader onUpload={onImageUpload} />
+          ) : (
+            <Editor 
+              image={state.currentImage} 
+              isProcessing={state.isProcessing} 
+              original={state.originalImage}
+              history={state.history}
+              onSelectVersion={selectHistoryItem}
+            />
+          )}
+
+          {state.isProcessing && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-md transition-all duration-300">
+              <div className="flex flex-col items-center gap-6">
+                <div className="w-14 h-14 border-[3px] border-indigo-500/10 border-t-indigo-500 rounded-full animate-spin shadow-[0_0_20px_rgba(79,70,229,0.3)]"></div>
+                <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-400 animate-pulse">Working...</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {notification.message && <Notification message={notification.message} type={notification.type} />}
+    </div>
+  );
+};
+
+export default App;
